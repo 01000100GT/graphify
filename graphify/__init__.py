@@ -19,6 +19,8 @@ def __getattr__(name):
         "to_svg": ("graphify.export", "to_svg"),
         "to_canvas": ("graphify.export", "to_canvas"),
         "to_wiki": ("graphify.wiki", "to_wiki"),
+        "SQLiteStore": ("graphify.db", "SQLiteStore"),
+        "NullStore": ("graphify.store", "NullStore"),
     }
     if name in _map:
         import importlib

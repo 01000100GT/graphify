@@ -934,6 +934,11 @@ def main() -> None:
         print("    --dfs                   use depth-first instead of breadth-first")
         print("    --budget N              cap output at N tokens (default 2000)")
         print("    --graph <path>          path to graph.json (default graphify-out/graph.json)")
+        print("  index                   index graph.json into SQLite for fast search")
+        print("    --graph <path>          path to graph.json (default graphify-out/graph.json)")
+        print("    --db <path>             path to graphify.db (default graphify-out/graphify.db)")
+        print("  reindex                 rebuild FTS5 search index from existing graphify.db")
+        print("    --db <path>             path to graphify.db (default graphify-out/graphify.db)")
         print("  save-result             save a Q&A result to graphify-out/memory/ for graph feedback loop")
         print("    --question Q            the question asked")
         print("    --answer A              the answer to save")
@@ -1093,6 +1098,51 @@ def main() -> None:
         else:
             print("Usage: graphify hook [install|uninstall|status]", file=sys.stderr)
             sys.exit(1)
+    elif cmd == "index":
+        graph_path = "graphify-out/graph.json"
+        db_path = "graphify-out/graphify.db"
+        args = sys.argv[2:]
+        i = 0
+        while i < len(args):
+            if args[i] == "--graph" and i + 1 < len(args):
+                graph_path = args[i + 1]; i += 2
+            elif args[i] == "--db" and i + 1 < len(args):
+                db_path = args[i + 1]; i += 2
+            else:
+                i += 1
+        gp = Path(graph_path).resolve()
+        if not gp.exists():
+            print(f"error: graph file not found: {gp}", file=sys.stderr)
+            sys.exit(1)
+        from graphify.db import SQLiteStore
+        print(f"Indexing {gp} into {db_path}...")
+        store = SQLiteStore(db_path)
+        result = store.sync_from_graph(str(gp))
+        st = store.stats()
+        print(f"Done: {st['nodes']} nodes, {st['edges']} edges indexed.")
+        print(f"  Nodes upserted: {result['nodes_added']}")
+        print(f"  Edges upserted: {result['edges_added']}")
+        store.close()
+    elif cmd == "reindex":
+        db_path = "graphify-out/graphify.db"
+        args = sys.argv[2:]
+        i = 0
+        while i < len(args):
+            if args[i] == "--db" and i + 1 < len(args):
+                db_path = args[i + 1]; i += 2
+            else:
+                i += 1
+        dp = Path(db_path).resolve()
+        if not dp.exists():
+            print(f"error: database not found: {dp} — run 'graphify index' first", file=sys.stderr)
+            sys.exit(1)
+        from graphify.db import SQLiteStore
+        print(f"Rebuilding FTS5 index in {dp}...")
+        store = SQLiteStore(db_path)
+        store.rebuild_fts()
+        st = store.stats()
+        print(f"Done: FTS5 index rebuilt for {st['nodes']} nodes.")
+        store.close()
     elif cmd == "query":
         if len(sys.argv) < 3:
             print("Usage: graphify query \"<question>\" [--dfs] [--budget N] [--graph path]", file=sys.stderr)

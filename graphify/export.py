@@ -279,7 +279,8 @@ def attach_hyperedges(G: nx.Graph, hyperedges: list) -> None:
     G.graph["hyperedges"] = existing
 
 
-def to_json(G: nx.Graph, communities: dict[int, list[str]], output_path: str) -> None:
+def to_json(G: nx.Graph, communities: dict[int, list[str]], output_path: str,
+            *, db_path: str | None = None) -> None:
     node_community = _node_community_map(communities)
     try:
         data = json_graph.node_link_data(G, edges="links")
@@ -295,6 +296,47 @@ def to_json(G: nx.Graph, communities: dict[int, list[str]], output_path: str) ->
     data["hyperedges"] = getattr(G, "graph", {}).get("hyperedges", [])
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+
+    # Optionally sync to SQLite index
+    if db_path is not None:
+        try:
+            from graphify.db import SQLiteStore
+            store = SQLiteStore(db_path)
+            degree = dict(G.degree())
+            nodes = []
+            for node_id, ndata in G.nodes(data=True):
+                nodes.append({
+                    "id": node_id,
+                    "label": ndata.get("label", ""),
+                    "file_type": ndata.get("file_type", ""),
+                    "source_file": ndata.get("source_file", ""),
+                    "source_location": ndata.get("source_location", ""),
+                    "community": node_community.get(node_id),
+                    "norm_label": ndata.get("norm_label") or _strip_diacritics(ndata.get("label", "")).lower(),
+                    "degree": degree.get(node_id, 0),
+                    "raw_text": ndata.get("raw_text"),
+                })
+            edges = []
+            for u, v, edata in G.edges(data=True):
+                edges.append({
+                    "source": u,
+                    "target": v,
+                    "relation": edata.get("relation", ""),
+                    "confidence": edata.get("confidence", "EXTRACTED"),
+                    "confidence_score": edata.get("confidence_score", 1.0),
+                    "weight": edata.get("weight", 1.0),
+                    "source_file": edata.get("source_file", ""),
+                    "source_location": edata.get("source_location", ""),
+                    "_src": edata.get("_src", u),
+                    "_tgt": edata.get("_tgt", v),
+                })
+            store.begin_bulk()
+            store.upsert_nodes(nodes)
+            store.upsert_edges(edges)
+            store.commit_bulk()
+            store.close()
+        except Exception:
+            pass  # SQLite indexing is optional; never break the main pipeline
 
 
 def prune_dangling_edges(graph_data: dict) -> tuple[dict, int]:

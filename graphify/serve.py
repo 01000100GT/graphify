@@ -147,7 +147,8 @@ def _filter_blank_stdin() -> None:
     sys.stdin = open(0, "r", closefd=False)
 
 
-def serve(graph_path: str = "graphify-out/graph.json") -> None:
+def serve(graph_path: str = "graphify-out/graph.json",
+          db_path: str | None = None) -> None:
     """Start the MCP server. Requires pip install mcp."""
     try:
         from mcp.server import Server
@@ -158,6 +159,28 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
 
     G = _load_graph(graph_path)
     communities = _communities_from_graph(G)
+
+    # Optional SQLite store for enhanced search
+    store = None
+    if db_path is not None:
+        try:
+            from graphify.db import SQLiteStore
+            s = SQLiteStore(db_path)
+            _ = s.stats()  # verify it opens
+            store = s
+        except Exception:
+            store = None
+    else:
+        # Auto-detect: if graphify.db exists alongside graph.json, use it
+        auto_db = Path(graph_path).resolve().parent / "graphify.db"
+        if auto_db.exists():
+            try:
+                from graphify.db import SQLiteStore
+                s = SQLiteStore(str(auto_db))
+                _ = s.stats()
+                store = s
+            except Exception:
+                store = None
 
     server = Server("graphify")
 
@@ -240,8 +263,21 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         depth = min(int(arguments.get("depth", 3)), 6)
         budget = int(arguments.get("token_budget", 2000))
         terms = [t.lower() for t in question.split() if len(t) > 2]
-        scored = _score_nodes(G, terms)
-        start_nodes = [nid for _, nid in scored[:3]]
+
+        # Use FTS5 for seed node recall when store is available
+        start_nodes = []
+        if store is not None:
+            try:
+                fts_results = store.search_nodes(question, limit=5)
+                start_nodes = [r["id"] for r in fts_results]
+            except Exception:
+                pass
+
+        # Fallback to substring matching
+        if not start_nodes:
+            scored = _score_nodes(G, terms)
+            start_nodes = [nid for _, nid in scored[:3]]
+
         if not start_nodes:
             return "No matching nodes found."
         nodes, edges = _dfs(G, start_nodes, depth) if mode == "dfs" else _bfs(G, start_nodes, depth)
